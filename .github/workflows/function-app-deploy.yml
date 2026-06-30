@@ -27,3 +27,4 @@ jobs:
           app-name: latro-aoi-readiness-func
           package: api
           publish-profile: ${{ secrets.AZURE_FUNCTIONAPP_PUBLISH_PROFILE }}
+
