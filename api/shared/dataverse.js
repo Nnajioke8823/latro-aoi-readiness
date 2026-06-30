@@ -10,6 +10,7 @@
 //   CERT_SOURCE = "keyvault" (default) | "filestore"
 //   keyvault : KEY_VAULT_URL, CERT_NAME           (managed identity reads the secret)
 //   filestore: CERT_THUMBPRINT  (+ optional CERT_P12_PATH, CERT_PASSWORD)
+//   CERT_PASSWORD: optional PFX password (only if the source PFX was password-protected)
 const fs = require("fs");
 const crypto = require("crypto");
 const msal = require("@azure/msal-node");
@@ -34,7 +35,7 @@ function fromPem(pem) {
   };
 }
 
-// --- Key Vault: read the certificate (stored as a PEM secret) via managed identity ---
+// --- Key Vault: read the certificate (PEM or base64-PKCS#12) via managed identity ---
 async function fromKeyVault() {
   const { SecretClient } = require("@azure/keyvault-secrets");
   const { DefaultAzureCredential } = require("@azure/identity");
@@ -48,9 +49,28 @@ async function fromKeyVault() {
     return fromPem(value);
   }
 
-  // Key Vault Certificates store the backing secret as base64-encoded PKCS#12
+  // Decode base64 PKCS#12
   const der = Buffer.from(value, "base64").toString("binary");
-  const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(der), false, "");
+  const asn1 = forge.asn1.fromDer(der);
+
+  // Try multiple password strategies (Key Vault behavior varies by import method)
+  const passwordsToTry = [
+    "",                              // most common for KV-managed certs
+    process.env.CERT_PASSWORD || ""  // fallback to env-provided password
+  ];
+
+  let p12 = null;
+  let lastError = null;
+  for (const pw of passwordsToTry) {
+    try {
+      p12 = forge.pkcs12.pkcs12FromAsn1(asn1, false, pw);
+      break;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  if (!p12) throw lastError || new Error("Could not parse PKCS#12 from Key Vault secret");
+
   const keyBag = (p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] || [])[0]
               || (p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] || [])[0];
   const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag][0];
