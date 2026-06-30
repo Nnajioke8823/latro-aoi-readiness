@@ -38,9 +38,24 @@ function fromPem(pem) {
 async function fromKeyVault() {
   const { SecretClient } = require("@azure/keyvault-secrets");
   const { DefaultAzureCredential } = require("@azure/identity");
+  const forge = require("node-forge");
   const client = new SecretClient(process.env.KEY_VAULT_URL, new DefaultAzureCredential());
   const secret = await client.getSecret(process.env.CERT_NAME);
-  return fromPem(secret.value);
+  const value = secret.value || "";
+
+  // If the secret is already PEM, parse directly
+  if (value.indexOf("-----BEGIN") !== -1) {
+    return fromPem(value);
+  }
+
+  // Key Vault Certificates store the backing secret as base64-encoded PKCS#12
+  const der = Buffer.from(value, "base64").toString("binary");
+  const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(der), false, "");
+  const keyBag = (p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] || [])[0]
+              || (p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] || [])[0];
+  const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag][0];
+  const pem = forge.pki.privateKeyToPem(keyBag.key) + "\n" + forge.pki.certificateToPem(certBag.cert);
+  return fromPem(pem);
 }
 
 // --- Function App certificate store: parse the loaded PKCS#12 (.p12) ---
