@@ -99,7 +99,9 @@ async function dv(method, path, payload) {
 // Reads the user that SWA/Easy Auth authenticated (confidential-not-anonymous identity).
 function principal(req) {
   try {
-    const h = req.headers["x-ms-client-principal"];
+    const h = req.headers.get
+      ? req.headers.get("x-ms-client-principal")
+      : req.headers["x-ms-client-principal"];
     if (!h) return null;
     return JSON.parse(Buffer.from(h, "base64").toString("utf8"));
   } catch { return null; }
