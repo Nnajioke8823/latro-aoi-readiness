@@ -3,7 +3,7 @@ const { dv } = require('../../shared/dataverse');
 
 function cleanDomain(anchor) {
   if (!anchor) return 'Other';
-  return anchor.split(/[·\/||−/])[0].trim().slice(0, 60) || 'Other';
+  return anchor.split(/[·\/|]|—/)[0].trim().slice(0, 60) || 'Other';
 }
 
 app.http('usecases', {
@@ -20,18 +20,18 @@ app.http('usecases', {
         return { status: 502, body: 'Use-case lookup failed: ' + res.status };
       }
       const data = await res.json();
-      const order2 = [];
+      const orderedDomains = [];
       const byDomain = {};
       (data.value || []).forEach(u => {
         const d = cleanDomain(u.aoi_e2eprocessanchor);
-        if (!byDomain[d]) { byDomain[d] = []; order2.push(d); }
+        if (!byDomain[d]) { byDomain[d] = []; orderedDomains.push(d); }
         byDomain[d].push({
           reference: u.aoi_usecasereference || '',
           name: u.aoi_aoiusecase1 || '',
           description: (u.aoi_capabilitydescription || '').slice(0, 140)
         });
       });
-      const groups = order2.map(d => ({ domain: d, items: byDomain[d] }));
+      const groups = orderedDomains.map(d => ({ domain: d, items: byDomain[d] }));
       return {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -39,7 +39,7 @@ app.http('usecases', {
       };
     } catch (e) {
       context.error(e);
-      return { status: 500, body: 'Server error: ' + e.message };
+      return { status: 500, body: 'Server error' };
     }
   }
 });
