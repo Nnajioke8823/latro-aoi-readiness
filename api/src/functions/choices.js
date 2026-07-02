@@ -1,7 +1,7 @@
-// GET /api/choices — reads option VALUES + LABELS straight from your published
-// global Choices and returns them keyed by the table COLUMN name the form uses.
-// No hand-maintained value map; always in sync with Dataverse.
-const { dv } = require("../shared/dataverse");
+// GET /api/choices — option VALUES + LABELS from your published global Choices,
+// keyed by the table COLUMN name the form uses. Azure Functions v4 (Node) model.
+const { app } = require("@azure/functions");
+const { dv } = require("../../shared/dataverse");
 
 // form column name  →  global Choice (option set) logical name
 const COLUMN_TO_CHOICE = {
@@ -25,7 +25,6 @@ const COLUMN_TO_CHOICE = {
 };
 
 async function readOptionSet(name) {
-  // GlobalOptionSetDefinitions returns Options[] with Value + localized Label
   const res = await dv("GET", "GlobalOptionSetDefinitions(Name='" + name + "')");
   if (!res.ok) throw new Error(name + " " + res.status);
   const body = await res.json();
@@ -35,15 +34,19 @@ async function readOptionSet(name) {
   });
 }
 
-module.exports = async function (context) {
-  try {
-    const cols = Object.keys(COLUMN_TO_CHOICE);
-    const results = await Promise.all(cols.map(c => readOptionSet(COLUMN_TO_CHOICE[c]).catch(() => [])));
-    const out = {};
-    cols.forEach((c, i) => { out[c] = results[i]; });
-    context.res = { headers: { "Content-Type": "application/json" }, body: out };
-  } catch (e) {
-    context.log.error(e);
-    context.res = { status: 500, body: "choices error: " + (e && e.message ? e.message : String(e)) };
+app.http("choices", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  handler: async (request, context) => {
+    try {
+      const cols = Object.keys(COLUMN_TO_CHOICE);
+      const results = await Promise.all(cols.map(c => readOptionSet(COLUMN_TO_CHOICE[c]).catch(() => [])));
+      const out = {};
+      cols.forEach((c, i) => { out[c] = results[i]; });
+      return { jsonBody: out };
+    } catch (e) {
+      context.error(e);
+      return { status: 500, body: "choices error: " + (e && e.message ? e.message : String(e)) };
+    }
   }
-};
+});
