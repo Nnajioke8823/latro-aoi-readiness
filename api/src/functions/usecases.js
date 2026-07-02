@@ -39,7 +39,7 @@ app.http("usecases", {
         byDomain[d].push({
           reference: u.aoi_usecasereference || "",
           name: fixText(u.aoi_aoiusecase1) || "",
-          description: fixText((u.aoi_capabilitydescription || "").slice(0, 200)).slice(0, 140)
+                    description: fixText(u.aoi_capabilitydescription || "").slice(0, 400)
         });
       });
       const groups = order2.map(d => ({ domain: d, items: byDomain[d] }));
