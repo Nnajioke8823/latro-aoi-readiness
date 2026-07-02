@@ -55,5 +55,6 @@ app.http('choices', {
     }
   }
 });
+"choices error: " + (e && e.message ? e.message : String(e))
 
-"usecases error: " + (e && e.message ? e.message : String(e))
+
