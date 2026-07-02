@@ -10,7 +10,6 @@
 //   CERT_SOURCE = "keyvault" (default) | "filestore"
 //   keyvault : KEY_VAULT_URL, CERT_NAME           (managed identity reads the secret)
 //   filestore: CERT_THUMBPRINT  (+ optional CERT_P12_PATH, CERT_PASSWORD)
-//   CERT_PASSWORD: optional PFX password (only if the source PFX was password-protected)
 const fs = require("fs");
 const crypto = require("crypto");
 const msal = require("@azure/msal-node");
@@ -35,61 +34,41 @@ function fromPem(pem) {
   };
 }
 
-// --- Key Vault: read the certificate (PEM or base64-PKCS#12) via managed identity ---
-async function fromKeyVault() {
-  const { SecretClient } = require("@azure/keyvault-secrets");
-  const { DefaultAzureCredential } = require("@azure/identity");
+// --- parse a PKCS#12 (DER as a binary string) into MSAL cert material ---
+function fromP12Binary(derBinary, password) {
   const forge = require("node-forge");
-  const client = new SecretClient(process.env.KEY_VAULT_URL, new DefaultAzureCredential());
-  const secret = await client.getSecret(process.env.CERT_NAME);
-  const value = secret.value || "";
-
-  // If the secret is already PEM, parse directly
-  if (value.indexOf("-----BEGIN") !== -1) {
-    return fromPem(value);
-  }
-
-  // Decode base64 PKCS#12
-  const der = Buffer.from(value, "base64").toString("binary");
-  const asn1 = forge.asn1.fromDer(der);
-
-  // Try multiple password strategies (Key Vault behavior varies by import method)
-  const passwordsToTry = [
-    "",                              // most common for KV-managed certs
-    process.env.CERT_PASSWORD || ""  // fallback to env-provided password
-  ];
-
-  let p12 = null;
-  let lastError = null;
-  for (const pw of passwordsToTry) {
-    try {
-      p12 = forge.pkcs12.pkcs12FromAsn1(asn1, false, pw);
-      break;
-    } catch (e) {
-      lastError = e;
-    }
-  }
-  if (!p12) throw lastError || new Error("Could not parse PKCS#12 from Key Vault secret");
-
+  const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(derBinary), false, password || "");
   const keyBag = (p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] || [])[0]
               || (p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] || [])[0];
+  if (!keyBag) throw new Error("PKCS#12 contained no private key.");
   const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag][0];
   const pem = forge.pki.privateKeyToPem(keyBag.key) + "\n" + forge.pki.certificateToPem(certBag.cert);
   return fromPem(pem);
 }
 
+// --- Key Vault: read the certificate secret via managed identity.
+//     Handles BOTH a PEM secret and a base64 PKCS#12 secret (the default when a
+//     .pfx certificate is imported into Key Vault). ---
+async function fromKeyVault() {
+  const { SecretClient } = require("@azure/keyvault-secrets");
+  const { DefaultAzureCredential } = require("@azure/identity");
+  if (!process.env.KEY_VAULT_URL || !process.env.CERT_NAME)
+    throw new Error("KEY_VAULT_URL and CERT_NAME app settings are required for CERT_SOURCE=keyvault.");
+  const client = new SecretClient(process.env.KEY_VAULT_URL, new DefaultAzureCredential());
+  const secret = await client.getSecret(process.env.CERT_NAME);
+  const val = secret.value || "";
+  const ct = (secret.properties && secret.properties.contentType) || "";
+  if (/pkcs12/i.test(ct) || !/-----BEGIN/.test(val)) {  // base64 PKCS#12
+    return fromP12Binary(Buffer.from(val, "base64").toString("binary"), process.env.CERT_PASSWORD || "");
+  }
+  return fromPem(val);
+}
+
 // --- Function App certificate store: parse the loaded PKCS#12 (.p12) ---
 function fromFileStore() {
-  const forge = require("node-forge");
   const thumb = (process.env.CERT_THUMBPRINT || "").replace(/:/g, "").toUpperCase();
   const path = process.env.CERT_P12_PATH || ("/var/ssl/private/" + thumb + ".p12");
-  const der = fs.readFileSync(path, "binary");
-  const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(der), false, process.env.CERT_PASSWORD || "");
-  let keyBag = (p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] || [])[0]
-            || (p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] || [])[0];
-  const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag][0];
-  const pem = forge.pki.privateKeyToPem(keyBag.key) + "\n" + forge.pki.certificateToPem(certBag.cert);
-  return fromPem(pem);
+  return fromP12Binary(fs.readFileSync(path, "binary"), process.env.CERT_PASSWORD || "");
 }
 
 async function loadCert() {
@@ -134,9 +113,7 @@ async function dv(method, path, payload) {
 // Reads the user that SWA/Easy Auth authenticated (confidential-not-anonymous identity).
 function principal(req) {
   try {
-    const h = req.headers.get
-      ? req.headers.get("x-ms-client-principal")
-      : req.headers["x-ms-client-principal"];
+    const h = req.headers["x-ms-client-principal"];
     if (!h) return null;
     return JSON.parse(Buffer.from(h, "base64").toString("utf8"));
   } catch { return null; }
