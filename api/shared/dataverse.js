@@ -21,16 +21,29 @@ const API = DV + "/api/data/v9.2/";
 
 let cca = null; // cached MSAL client (holds the in-memory token cache)
 
-// --- turn a PEM blob (private key + certificate) into MSAL cert material ---
-function fromPem(pem) {
-  const key = pem.match(/-----BEGIN (?:RSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA |ENCRYPTED )?PRIVATE KEY-----/);
-  const cert = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/);
-  if (!key || !cert) throw new Error("Certificate PEM must contain both a private key and a certificate.");
-  const x509 = new crypto.X509Certificate(cert[0]);
+// --- turn a PEM blob into MSAL cert material (resilient to mangled newlines) ---
+function _pemNormalize(raw) {
+  return String(raw).replace(/\r/g, "").replace(/\\n/g, "\n");   // strip CR, unescape literal \n
+}
+function _pemBlock(pem, type) {
+  // matches PRIVATE KEY / RSA PRIVATE KEY / CERTIFICATE, then rebuilds a clean block
+  const re = new RegExp("-----BEGIN ([A-Z0-9 ]*" + type + ")-----([\\s\\S]*?)-----END \\1-----");
+  const m = pem.match(re);
+  if (!m) return null;
+  const body = (m[2].match(/[A-Za-z0-9+/=]+/g) || []).join("");   // base64 chars only
+  const wrapped = (body.match(/.{1,64}/g) || []).join("\n");      // rewrap at 64 cols
+  return "-----BEGIN " + m[1] + "-----\n" + wrapped + "\n-----END " + m[1] + "-----\n";
+}
+function fromPem(pemRaw) {
+  const pem = _pemNormalize(pemRaw);
+  const keyPem = _pemBlock(pem, "PRIVATE KEY");
+  const certPem = _pemBlock(pem, "CERTIFICATE");
+  if (!keyPem || !certPem) throw new Error("Certificate PEM must contain both a private key and a certificate.");
+  const x509 = new crypto.X509Certificate(certPem);
   return {
-    privateKey: key[0],
+    privateKey: keyPem,
     thumbprint: x509.fingerprint.replace(/:/g, ""),               // SHA-1 hex
-    x5c: cert[0].replace(/-----[^-]+-----/g, "").replace(/\s/g, "") // base64 DER (leaf)
+    x5c: certPem.replace(/-----[^-]+-----/g, "").replace(/\s/g, "") // base64 DER (leaf)
   };
 }
 
