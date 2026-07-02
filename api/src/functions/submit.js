@@ -52,6 +52,7 @@ app.http('submit', {
       };
     } catch (e) {
       context.error(e);
+      "submit error: " + (e && e.message ? e.message : String(e))
       return { status: 500, body: 'Server error' };
     }
   }
