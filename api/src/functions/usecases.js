@@ -3,10 +3,21 @@
 const { app } = require("@azure/functions");
 const { dv } = require("../../shared/dataverse");
 
+// Repair double-encoded UTF-8 (mojibake like â€œ â€™ â€") coming from source text.
+// Only reinterprets when the tell-tale mojibake lead bytes are present.
+function fixText(s) {
+  if (!s) return s;
+  if (/[ÂÃâ]/.test(s)) {
+    try { return Buffer.from(s, "latin1").toString("utf8"); } catch (e) { return s; }
+  }
+  return s;
+}
+
 function cleanDomain(anchor) {
-  if (!anchor) return "Other";
+  const a = fixText(anchor);
+  if (!a) return "Other";
   // anchors look like "Technical Presales · Bid management" — take the first segment
-  return anchor.split(/[·\/|]|—/)[0].trim().slice(0, 60) || "Other";
+  return a.split(/[·\/|]|—/)[0].trim().slice(0, 60) || "Other";
 }
 
 app.http("usecases", {
@@ -27,8 +38,8 @@ app.http("usecases", {
         if (!byDomain[d]) { byDomain[d] = []; order2.push(d); }
         byDomain[d].push({
           reference: u.aoi_usecasereference || "",
-          name: u.aoi_aoiusecase1 || "",
-          description: (u.aoi_capabilitydescription || "").slice(0, 140)
+          name: fixText(u.aoi_aoiusecase1) || "",
+          description: fixText((u.aoi_capabilitydescription || "").slice(0, 200)).slice(0, 140)
         });
       });
       const groups = order2.map(d => ({ domain: d, items: byDomain[d] }));
