@@ -107,18 +107,20 @@ async function getToken() {
   return r.accessToken;
 }
 
-async function dv(method, path, payload) {
+async function dv(method, path, payload, callerObjectId) {
   const token = await getToken();
+  const headers = {
+    Authorization: "Bearer " + token,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "OData-MaxVersion": "4.0",
+    "OData-Version": "4.0",
+    Prefer: "return=representation"
+  };
+  if (callerObjectId) headers.CallerObjectId = callerObjectId;   // impersonate: create AS this Entra user
   return fetch(API + path, {
     method,
-    headers: {
-      Authorization: "Bearer " + token,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "OData-MaxVersion": "4.0",
-      "OData-Version": "4.0",
-      Prefer: "return=representation"
-    },
+    headers,
     body: payload ? JSON.stringify(payload) : undefined
   });
 }
