@@ -39,6 +39,7 @@ app.http('usecases', {
       };
     } catch (e) {
       context.error(e);
+      "usecases error: " + (e && e.message ? e.message : String(e))
       return { status: 500, body: 'Server error' };
     }
   }
