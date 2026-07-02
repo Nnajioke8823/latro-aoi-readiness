@@ -1,34 +1,46 @@
-// GET /api/choices — option VALUES + LABELS from your published global Choices,
-// keyed by the table COLUMN name the form uses. Azure Functions v4 (Node) model.
+// GET /api/choices — reads each form column's OWN option set from Dataverse
+// (works whether the column is LOCAL or synced to a GLOBAL choice), so the
+// dropdown/radio values always match exactly what the column will accept.
+// Keyed by the table COLUMN name the form uses. Azure Functions v4 (Node) model.
 const { app } = require("@azure/functions");
 const { dv } = require("../../shared/dataverse");
 
-// form column name  →  global Choice (option set) logical name
-const COLUMN_TO_CHOICE = {
-  lts_programmegate: "lts_programmegate",
-  lts_businessunit: "lts_businessunit",
-  lts_function: "lts_function",
-  lts_officeregion: "lts_officeregion",
-  lts_timeatlatro: "lts_timeatlatro",
-  lts_e2eprocess: "lts_e2eproces",
-  lts_manualcoordtime: "lts_manualcoordtim",
-  lts_informationlocation: "lts_infolocation",
-  lts_exceptionheaviness: "lts_exceptionheaviness",
-  lts_reworkloss: "lts_reworkloss",
-  lts_aitoolusage: "lts_aitoolusage",
-  lts_copilotscenario: "lts_copilotscenario",
-  lts_gyrfamiliarity: "lts_gyrfamiliarity",
-  lts_teampreparedness: "lts_teampreparedness",
-  lts_leadershippreparedness: "lts_leadershippreparedness",
-  lts_reskillingsharerequired: "lts_reskillingshare",
-  lts_ucresponse: "lts_ucresponse"
+const PARENT = "lts_ltsassessmentresponse";   // entity LOGICAL name (singular)
+const CHILD = "lts_ltsusecaserating";
+
+// form column name  ->  entity the column lives on
+const COLUMNS = {
+  lts_programmegate: PARENT,
+  lts_businessunit: PARENT,
+  lts_function: PARENT,
+  lts_officeregion: PARENT,
+  lts_timeatlatro: PARENT,
+  lts_e2eprocess: PARENT,
+  lts_manualcoordtime: PARENT,
+  lts_informationlocation: PARENT,
+  lts_exceptionheaviness: PARENT,
+  lts_reworkloss: PARENT,
+  lts_aitoolusage: PARENT,
+  lts_copilotscenario: PARENT,
+  lts_gyrfamiliarity: PARENT,
+  lts_teampreparedness: PARENT,
+  lts_leadershippreparedness: PARENT,
+  lts_reskillingsharerequired: PARENT,
+  lts_ucresponse: CHILD,
+  lts_domain: CHILD
 };
 
-async function readOptionSet(name) {
-  const res = await dv("GET", "GlobalOptionSetDefinitions(Name='" + name + "')");
-  if (!res.ok) throw new Error(name + " " + res.status);
+async function readColumn(entity, col) {
+  // read the picklist column's metadata; expand both local and global option sets
+  const path = "EntityDefinitions(LogicalName='" + entity + "')/Attributes(LogicalName='" + col +
+    "')/Microsoft.Dynamics.CRM.PicklistAttributeMetadata" +
+    "?$select=LogicalName&$expand=OptionSet($select=Options),GlobalOptionSet($select=Options)";
+  const res = await dv("GET", path);
+  if (!res.ok) throw new Error(col + " " + res.status);
   const body = await res.json();
-  return (body.Options || []).map(function (o) {
+  const options = (body.OptionSet && body.OptionSet.Options) ||
+                  (body.GlobalOptionSet && body.GlobalOptionSet.Options) || [];
+  return options.map(function (o) {
     const lbl = o.Label && o.Label.UserLocalizedLabel && o.Label.UserLocalizedLabel.Label;
     return { value: o.Value, label: lbl || String(o.Value) };
   });
@@ -39,8 +51,8 @@ app.http("choices", {
   authLevel: "anonymous",
   handler: async (request, context) => {
     try {
-      const cols = Object.keys(COLUMN_TO_CHOICE);
-      const results = await Promise.all(cols.map(c => readOptionSet(COLUMN_TO_CHOICE[c]).catch(() => [])));
+      const cols = Object.keys(COLUMNS);
+      const results = await Promise.all(cols.map(c => readColumn(COLUMNS[c], c).catch(() => [])));
       const out = {};
       cols.forEach((c, i) => { out[c] = results[i]; });
       return { jsonBody: out };
