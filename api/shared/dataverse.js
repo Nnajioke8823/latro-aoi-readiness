@@ -109,6 +109,7 @@ async function getToken() {
 
 async function dv(method, path, payload, callerObjectId) {
   const token = await getToken();
+
   const headers = {
     Authorization: "Bearer " + token,
     "Content-Type": "application/json",
@@ -117,7 +118,12 @@ async function dv(method, path, payload, callerObjectId) {
     "OData-Version": "4.0",
     Prefer: "return=representation"
   };
-  if (callerObjectId) headers.CallerObjectId = callerObjectId;   // impersonate: create AS this Entra user
+
+  // Dataverse impersonation
+  if (callerObjectId) {
+    headers.CallerObjectId = callerObjectId;
+  }
+
   return fetch(API + path, {
     method,
     headers,
